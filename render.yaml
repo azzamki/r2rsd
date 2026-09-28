@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: visit-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+        value: false
+    # Render free tier = 512MB RAM
+    # Kurangi maxAgents di config.js jika sering OOM

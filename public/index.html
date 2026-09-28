@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Visitor Bot — Control Panel</title>
+  <meta name="description" content="Multi-agent AI visitor bot with proxy rotation, human-like behavior, and real-time dashboard." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">
+        <div class="logo-icon">🤖</div>
+        <div>
+          <div class="logo-title">AI Visitor Bot</div>
+          <div class="logo-sub">Multi-Agent Traffic Engine v1.0</div>
+        </div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-badge" id="serverStatus">
+        <span class="dot"></span> Connected
+      </div>
+      <div class="clock" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- LEFT PANEL -->
+    <aside class="sidebar">
+      <!-- JOB CONFIG -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-icon">⚡</span>
+          <h2>New Visit Job</h2>
+        </div>
+
+        <div class="form-group">
+          <label for="targetUrl">Target URL</label>
+          <input type="url" id="targetUrl" placeholder="https://yourwebsite.com" />
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="visitCount">Total Visits</label>
+            <input type="number" id="visitCount" value="10" min="1" max="9999" />
+          </div>
+          <div class="form-group">
+            <label for="maxAgents">Agents</label>
+            <input type="number" id="maxAgents" value="3" min="1" max="20" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="minDuration">Min Duration (s)</label>
+            <input type="number" id="minDuration" value="15" min="5" />
+          </div>
+          <div class="form-group">
+            <label for="maxDuration">Max Duration (s)</label>
+            <input type="number" id="maxDuration" value="90" min="10" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="clickSelectors">Click Selectors (optional, one per line)</label>
+          <textarea id="clickSelectors" rows="2" placeholder=".btn-signup&#10;#hero-cta"></textarea>
+        </div>
+
+        <div class="toggle-row">
+          <label class="toggle-label">
+            <input type="checkbox" id="buildHistory" checked />
+            <span class="toggle"></span>
+            Build Browser History
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="useProxy" checked />
+            <span class="toggle"></span>
+            Use Proxies
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="autoClickInternal" checked />
+            <span class="toggle"></span>
+            Auto Click Internal Link
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="autoClickExternal" checked />
+            <span class="toggle"></span>
+            Auto Click External Link
+          </label>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn btn-primary" id="startBtn" onclick="startJob()">
+            <span>▶</span> Start
+          </button>
+          <button class="btn btn-warning" id="pauseBtn" onclick="pauseJob()" disabled>
+            <span>⏸</span> Pause
+          </button>
+          <button class="btn btn-danger" id="stopBtn" onclick="stopJob()" disabled>
+            <span>⏹</span> Stop
+          </button>
+        </div>
+      </section>
+
+      <!-- PROXY MANAGER -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-icon">🌐</span>
+          <h2>Proxy Manager</h2>
+        </div>
+
+        <div class="proxy-stats" id="proxyStats">
+          <div class="pstat">
+            <div class="pstat-val" id="pTotal">0</div>
+            <div class="pstat-label">Total</div>
+          </div>
+          <div class="pstat good">
+            <div class="pstat-val" id="pWorking">0</div>
+            <div class="pstat-label">Working</div>
+          </div>
+          <div class="pstat bad">
+            <div class="pstat-val" id="pFailed">0</div>
+            <div class="pstat-label">Failed</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="manualProxies">Manual Proxies (ip:port, one per line)</label>
+          <textarea id="manualProxies" rows="3" placeholder="1.2.3.4:8080&#10;5.6.7.8:3128"></textarea>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn btn-primary" id="grabProxyBtn" onclick="grabProxies()">
+            <span>🔍</span> Grab + Check
+          </button>
+          <button class="btn btn-secondary" onclick="checkManualProxies()">
+            <span>✅</span> Check Manual
+          </button>
+        </div>
+
+        <div class="proxy-phase" id="proxyPhase"></div>
+        <div class="proxy-progress" id="proxyProgress" style="display:none">
+          <div class="progress-bar"><div class="progress-fill" id="proxyProgressFill"></div></div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <div class="content">
+      <!-- STATS ROW -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-icon">🎯</div>
+          <div class="stat-info">
+            <div class="stat-val" id="statVisits">0</div>
+            <div class="stat-label">Total Visits</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">⚡</div>
+          <div class="stat-info">
+            <div class="stat-val" id="statRunning">0</div>
+            <div class="stat-label">Active Agents</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📋</div>
+          <div class="stat-info">
+            <div class="stat-val" id="statQueued">0</div>
+            <div class="stat-label">Queued</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📈</div>
+          <div class="stat-info">
+            <div class="stat-val" id="statSuccess">100%</div>
+            <div class="stat-label">Success Rate</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">❌</div>
+          <div class="stat-info">
+            <div class="stat-val" id="statErrors">0</div>
+            <div class="stat-label">Errors</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AGENT MONITOR -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-icon">🤖</span>
+          <h2>Live Agent Monitor</h2>
+          <div class="card-badge" id="agentCount">0 active</div>
+        </div>
+        <div class="agent-grid" id="agentGrid">
+          <div class="agent-empty">No agents running. Start a job to begin.</div>
+        </div>
+      </section>
+
+      <!-- WORKING PROXIES -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-icon">🌐</span>
+          <h2>Working Proxies</h2>
+          <button class="card-btn" onclick="loadProxyList()">↻ Refresh</button>
+        </div>
+        <div class="proxy-table-wrap">
+          <table class="proxy-table" id="proxyTable">
+            <thead>
+              <tr><th>#</th><th>Proxy</th><th>IP</th><th>Latency</th><th>Status</th></tr>
+            </thead>
+            <tbody id="proxyTableBody">
+              <tr><td colspan="5" class="table-empty">No proxies loaded</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ACTIVITY LOG -->
+      <section class="card">
+        <div class="card-header">
+          <span class="card-icon">📜</span>
+          <h2>Activity Log</h2>
+          <button class="card-btn" onclick="clearLog()">🗑 Clear</button>
+        </div>
+        <div class="log-container" id="logContainer"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- TOAST -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+
+# Data (proxy blacklist dll - di-generate saat runtime)
+data/_diag.json
+data/_devices.json
+data/_profiles.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
