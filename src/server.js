@@ -177,10 +177,11 @@ app.post('/api/proxy/check', async (req, res) => {
       // Validate ONLY the caller-supplied list (fast), then merge the
       // survivors into the pool. Avoids re-checking thousands of proxies.
       const cleaned = proxies
-        .map(p => String(p || '').trim())
-        .filter(p => /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{2,5}$/.test(p));
-      proxyManager.addProxies(cleaned);
-      working = await proxyManager.checkAllProxies(cleaned);
+        .map(p => proxyManager.parseProxyLine(p))
+        .filter(Boolean);
+      cleaned.forEach(p => proxyManager.removeFromBlacklist(p));
+      proxyManager.addProxies(cleaned, true);
+      working = await proxyManager.checkAllProxies(cleaned, true);
     } else {
       working = await proxyManager.checkAllProxies();
     }

@@ -335,6 +335,17 @@ async function clickInternalAndExternalLinks(agentId, page, targetUrl, options =
 
   // ── 2. EXTERNAL LINK CLICKING ──
   if (autoClickExternal && !page.isClosed()) {
+    // Domains to skip when auto-clicking external links
+    const EXTERNAL_BLACKLIST = [
+      'imamuddinwp.com',
+      'blogger.com',
+      'blogspot.com',
+      'google.com',
+      'facebook.com',
+      'twitter.com',
+      'instagram.com',
+    ];
+
     try {
       const externalHrefs = await page.$$eval('a[href]', (els, orig) => {
         return els
@@ -351,6 +362,18 @@ async function clickInternalAndExternalLinks(agentId, page, targetUrl, options =
             }
           });
       }, origin);
+
+      // Filter out blacklisted domains
+      const filtered = externalHrefs.filter(href => {
+        try {
+          const host = new URL(href).hostname.replace(/^www\./, '');
+          return !EXTERNAL_BLACKLIST.some(b => host === b || host.endsWith('.' + b));
+        } catch { return true; }
+      });
+
+      // Replace externalHrefs with filtered list below
+      externalHrefs.length = 0;
+      filtered.forEach(h => externalHrefs.push(h));
 
       if (externalHrefs.length > 0) {
         const targetHref = externalHrefs[Math.floor(Math.random() * externalHrefs.length)];
@@ -451,8 +474,24 @@ class BrowserAgent {
     }
 
     if (this.proxyInfo) {
-      launchArgs.push(`--proxy-server=http://${this.proxyInfo.proxy}`);
-      logger.info(`[Agent ${this.agentId}] Using proxy: ${this.proxyInfo.proxy} (${this.proxyInfo.latency}ms)`);
+      const rawP = this.proxyInfo.proxy || '';
+      let proxyArg = rawP;
+      let authUser = null;
+      let authPass = null;
+
+      const authMatch = rawP.match(/^(?:(https?|socks[45]?):\/\/)?([^:]+):([^@]+)@(.+)$/i);
+      if (authMatch) {
+        const proto = authMatch[1] || 'http';
+        authUser = authMatch[2];
+        authPass = authMatch[3];
+        proxyArg = `${proto}://${authMatch[4]}`;
+      } else if (!/^(https?|socks[45]?):\/\//i.test(proxyArg)) {
+        proxyArg = `http://${proxyArg}`;
+      }
+
+      launchArgs.push(`--proxy-server=${proxyArg}`);
+      logger.info(`[Agent ${this.agentId}] Using proxy: ${proxyArg} (${this.proxyInfo.latency}ms)`);
+      this._proxyAuth = authUser && authPass ? { username: authUser, password: authPass } : null;
     } else {
       logger.warn(`[Agent ${this.agentId}] No proxy available — using direct connection`);
     }
@@ -469,6 +508,11 @@ class BrowserAgent {
     });
 
     this.page = await this.browser.newPage();
+    if (this._proxyAuth) {
+      await this.page.authenticate(this._proxyAuth).catch(e => {
+        logger.warn(`[Agent ${this.agentId}] Proxy auth error: ${e.message}`);
+      });
+    }
 
     // Full mobile emulation (viewport + deviceScaleFactor + hasTouch +
     // isMobile) from puppeteer's device descriptors.

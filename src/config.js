@@ -124,14 +124,11 @@ module.exports = {
     // (transparent proxies that leak your real IP are useless for this).
     requireIpMatch: false,
     // Retry a visit with a different proxy this many times before giving up
-    maxProxyRetries: 3,
-    // How many times a proxy may fail before it is blacklisted. Free
-    // proxies are flaky, so a single transient timeout should not kill a
-    // proxy that otherwise works.
-    failThreshold: 3,
-    // Cooldown (ms) before a failed proxy is eligible again. Free proxies
-    // often recover, so we don't drop them permanently on first failure.
-    failCooldown: 5 * 60 * 1000,
+    maxProxyRetries: 5,
+    // How many times a proxy may fail before it is blacklisted.
+    failThreshold: 5,
+    // Cooldown (ms) before a failed proxy is eligible again.
+    failCooldown: 2 * 60 * 1000,
     // Persist the failed-proxy blacklist to disk so dead proxies are
     // skipped across restarts, not just within one session.
     blacklistFile: './logs/proxy-blacklist.json',

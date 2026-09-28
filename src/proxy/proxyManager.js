@@ -14,16 +14,32 @@ const logger = require('../utils/logger');
 const config = require('../config');
 const EventEmitter = require('events');
 
-// Matches ip:port, optional protocol prefix (http/https/socks4/socks5)
-const PROXY_RE = /^(?:https?|socks[45]):\/\/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{2,5})$/;
-const PLAIN_PROXY_RE = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{2,5})$/;
+// Matches ip:port or domain:port with optional protocol prefix (http/https/socks4/socks5) and optional user:pass auth
+const PROXY_RE = /^(?:(https?|socks[45]?):\/\/)?(?:([^:]+):([^@]+)@)?([a-zA-Z0-9.-]+):(\d{2,5})$/i;
+const PROXY_RE_ALT = /^(?:(https?|socks[45]?):\/\/)?([a-zA-Z0-9.-]+):(\d{2,5}):([^:]+):([^@]+)$/i;
 
 function parseProxyLine(line) {
   const raw = String(line || '').trim();
   if (!raw) return null;
-  const m = raw.match(PROXY_RE);
-  if (m) return m[1];
-  if (PLAIN_PROXY_RE.test(raw)) return raw;
+  let m = raw.match(PROXY_RE);
+  if (m) {
+    const proto = (m[1] || 'http').toLowerCase();
+    const user = m[2] || null;
+    const pass = m[3] || null;
+    const host = m[4];
+    const port = m[5];
+    const authStr = user && pass ? `${user}:${pass}@` : '';
+    return `${proto === 'http' && !authStr ? '' : proto + '://'}${authStr}${host}:${port}`;
+  }
+  m = raw.match(PROXY_RE_ALT);
+  if (m) {
+    const proto = (m[1] || 'http').toLowerCase();
+    const host = m[2];
+    const port = m[3];
+    const user = m[4];
+    const pass = m[5];
+    return `${proto === 'http' ? '' : proto + '://'}${user}:${pass}@${host}:${port}`;
+  }
   return null;
 }
 
@@ -101,6 +117,22 @@ class ProxyManager extends EventEmitter {
     return this.blacklist.has(proxy);
   }
 
+  removeFromBlacklist(proxy) {
+    const clean = parseProxyLine(proxy) || proxy;
+    if (this.blacklist.has(clean)) {
+      this.blacklist.delete(clean);
+      delete this.blacklistReason[clean];
+      delete this.failCount[clean];
+      delete this.lastFailAt[clean];
+      this.stats.blacklisted = this.blacklist.size;
+      this._saveBlacklist();
+    }
+  }
+
+  parseProxyLine(line) {
+    return parseProxyLine(line);
+  }
+
   // ──────────────────────────────────────────
   // GRAB PROXIES FROM FREE SOURCES
   // ──────────────────────────────────────────
@@ -157,7 +189,7 @@ class ProxyManager extends EventEmitter {
   // ──────────────────────────────────────────
   // ADD MANUAL PROXIES
   // ──────────────────────────────────────────
-  addProxies(proxyList) {
+  addProxies(proxyList, unblacklist = false) {
     if (!Array.isArray(proxyList)) return 0;
     const existing = new Set(this.proxies);
     let added = 0, blacklisted = 0;
@@ -165,6 +197,9 @@ class ProxyManager extends EventEmitter {
     proxyList.forEach(p => {
       const clean = parseProxyLine(p);
       if (!clean) return;
+      if (unblacklist) {
+        this.removeFromBlacklist(clean);
+      }
       if (this.blacklist.has(clean)) { blacklisted++; return; }
       if (!existing.has(clean)) {
         this.proxies.push(clean);
@@ -183,40 +218,57 @@ class ProxyManager extends EventEmitter {
   // ──────────────────────────────────────────
   async checkProxy(proxy) {
     const timeout = config.proxy.checkTimeout;
-    const proxyUrl = `http://${proxy}`;
-    const agent = new HttpsProxyAgent(proxyUrl, { timeout });
+    const clean = parseProxyLine(proxy) || proxy;
 
-    const start = Date.now();
+    let agent;
     try {
-      const res = await axios.get(config.proxy.checkUrl, {
-        httpsAgent: agent,
-        httpAgent: agent,
-        proxy: false,                 // never fall back to env proxies
-        timeout,
-        signal: AbortSignal.timeout(timeout),  // hard cap: axios timeout alone
-                                               // does NOT fire on ETIMEDOUT
-        validateStatus: () => true,
-      });
-      const latency = Date.now() - start;
-      const ip = res.data?.ip || res.data?.origin;
-
-      if (res.status !== 200 || !ip) {
-        return { proxy, working: false, latency: null, reason: `status ${res.status}` };
+      if (clean.startsWith('socks4://') || clean.startsWith('socks5://') || clean.startsWith('socks://')) {
+        agent = new SocksProxyAgent(clean, { timeout });
+      } else {
+        const httpUrl = clean.startsWith('http://') || clean.startsWith('https://') ? clean : `http://${clean}`;
+        agent = new HttpsProxyAgent(httpUrl, { timeout });
       }
-
-      // Reject transparent proxies that leak the real IP: the exit IP must
-      // match the proxy address, otherwise it isn't hiding anything.
-      if (config.proxy.requireIpMatch && ip !== proxy.split(':')[0]) {
-        return { proxy, working: false, latency: null, reason: `ip mismatch (${ip})`, leakedIp: ip };
-      }
-
-      return { proxy, working: true, latency, ip };
     } catch (e) {
-      return { proxy, working: false, latency: null, reason: e.code || e.message };
+      return { proxy: clean, working: false, latency: null, reason: `agent error: ${e.message}` };
     }
+
+    const checkUrls = [
+      config.proxy.checkUrl,
+      config.proxy.checkUrlFallback || 'http://httpbin.org/ip',
+    ].filter(Boolean);
+
+    let lastReason = 'failed';
+    for (const testUrl of checkUrls) {
+      const start = Date.now();
+      try {
+        const res = await axios.get(testUrl, {
+          httpsAgent: agent,
+          httpAgent: agent,
+          proxy: false, // never fall back to env proxies
+          timeout,
+          signal: AbortSignal.timeout(timeout),
+          validateStatus: () => true,
+        });
+        const latency = Date.now() - start;
+        const ip = res.data?.ip || res.data?.origin;
+
+        if (res.status === 200 && ip) {
+          const hostPart = clean.replace(/^(?:https?|socks[45]?):\/\//i, '').replace(/@.*/, '').split(':')[0];
+          if (config.proxy.requireIpMatch && ip !== hostPart) {
+            return { proxy: clean, working: false, latency: null, reason: `ip mismatch (${ip})`, leakedIp: ip };
+          }
+          return { proxy: clean, working: true, latency, ip };
+        }
+        lastReason = `status ${res.status}`;
+      } catch (e) {
+        lastReason = e.code || e.message;
+      }
+    }
+
+    return { proxy: clean, working: false, latency: null, reason: lastReason };
   }
 
-  async checkAllProxies(proxiesToCheck = null) {
+  async checkAllProxies(proxiesToCheck = null, allowBlacklisted = false) {
     // Serialize check runs. If a check is already in flight, wait for it and
     // then run the caller's list instead of silently returning an empty list.
     if (this.isChecking) {
@@ -225,7 +277,11 @@ class ProxyManager extends EventEmitter {
     if (this.isChecking) return this.workingProxies;
     this.isChecking = true;
 
-    const list = (proxiesToCheck || this.proxies).filter(p => !this.blacklist.has(p));
+    const rawList = proxiesToCheck || this.proxies;
+    const list = allowBlacklisted
+      ? rawList.map(p => parseProxyLine(p)).filter(Boolean)
+      : rawList.filter(p => !this.blacklist.has(p));
+
     if (list.length === 0) {
       this.isChecking = false;
       this.workingProxies = [];
