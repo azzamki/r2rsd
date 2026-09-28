@@ -23,6 +23,12 @@ async function main() {
     logger.info('🔄 Auto-initializing proxy pool...');
     proxyManager.initialize().then(working => {
       logger.info(`✅ Proxy pool ready: ${working.length} working proxies`);
+      // Keep the pool fresh forever: grab + check on a timer so dead free
+      // proxies are continuously replaced with new working ones.
+      // immediate:false — initialize() just did a full grab+check.
+      if (config.proxy.refreshInterval !== 0) {
+        proxyManager.startAutoRefresh(undefined, { immediate: false });
+      }
     }).catch(e => {
       logger.warn(`⚠️ Proxy init warning: ${e.message}`);
     });

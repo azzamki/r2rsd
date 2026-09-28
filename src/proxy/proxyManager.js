@@ -65,6 +65,7 @@ class ProxyManager extends EventEmitter {
     this.currentIndex = 0;
     this.isGrabbing = false;
     this.isChecking = false;
+    this.refreshTimer = null;  // auto grab+check interval
     this.stats = {
       total: 0,
       working: 0,
@@ -404,6 +405,53 @@ class ProxyManager extends EventEmitter {
     if (!proxy || proxy === 'direct') return;
     if (this.failCount[proxy]) delete this.failCount[proxy];
     if (this.lastFailAt[proxy]) delete this.lastFailAt[proxy];
+  }
+
+  // ──────────────────────────────────────────
+  // AUTO REFRESH: grab + check on a timer
+  // Free proxies die fast, so the pool is replenished continuously instead
+  // of only when the dashboard button is pressed or the pool runs low.
+  // ──────────────────────────────────────────
+  async refresh() {
+    if (this.isGrabbing || this.isChecking) return;
+    logger.info('🔄 Auto refresh: grabbing + checking proxies...');
+    try {
+      await this.grabProxies();
+      if (this.proxies.length > 0) {
+        // Cap the re-check so a periodic refresh doesn't monopolize the
+        // checker for minutes (which would 409 the dashboard button).
+        const cap = config.proxy.autoCheckLimit;
+        const list = cap && this.proxies.length > cap
+          ? shuffle(this.proxies).slice(0, cap)
+          : this.proxies;
+        await this.checkAllProxies(list);
+      }
+      logger.info(`🔄 Auto refresh done: ${this.workingProxies.length} working proxies`);
+    } catch (e) {
+      logger.warn(`Auto refresh failed: ${e.message}`);
+    }
+  }
+
+  // Schedule continuous grab+check so the pool never goes stale. Pass
+  // { immediate: false } when the pool was just initialized — otherwise the
+  // first tick duplicates the grab+check that initialize() already ran.
+  startAutoRefresh(intervalMs, { immediate = true } = {}) {
+    this.stopAutoRefresh();
+    const ms = intervalMs || (config.proxy.refreshInterval ?? 10 * 60 * 1000);
+    if (immediate) {
+      this.refresh().catch(e => logger.warn(`Auto refresh failed: ${e.message}`));
+    }
+    this.refreshTimer = setInterval(() => {
+      this.refresh().catch(e => logger.warn(`Auto refresh failed: ${e.message}`));
+    }, ms);
+    logger.info(`⏱️ Proxy auto-refresh scheduled every ${Math.round(ms / 1000 / 60)} min`);
+  }
+
+  stopAutoRefresh() {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
   }
 
   // ──────────────────────────────────────────

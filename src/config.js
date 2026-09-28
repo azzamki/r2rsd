@@ -35,57 +35,40 @@ module.exports = {
       { width: 1600, height: 900 },
     ],
 
-    // Browser fingerprints — each visit picks one at random so traffic
-    // doesn't all look like the same Chrome-on-Windows client.
-    // (Puppeteer is Chromium-only, so "browser" here means a distinct
-    //  UA brand + viewport + locale + timezone combination.)
+    // ── MOBILE-ONLY FINGERPRINTS ──
+    // This bot targets mobile traffic only: Android (Chrome/Edge/Opera/
+    // Brave) and iPhone (Safari). Desktop Windows/macOS/Linux profiles are
+    // intentionally absent. Every entry carries a real puppeteer.KnownDevices
+    // `device` name, so the agent applies full mobile emulation (touch +
+    // mobile viewport) and only overrides the UA brand.
+    // Android pairs with Chrome 120+ ("mobile 12+"); iPhones use the genuine
+    // Safari UA because iOS is not a Chromium engine.
     browserProfiles: [
-      // Chrome — Windows
-      { browser: 'chrome', platform: 'Win32', viewport: { width: 1920, height: 1080 }, locale: 'en-US', timezone: 'America/New_York' },
-      { browser: 'chrome', platform: 'Win32', viewport: { width: 1366, height: 768 }, locale: 'en-US', timezone: 'America/Chicago' },
-      { browser: 'chrome', platform: 'Win32', viewport: { width: 1536, height: 864 }, locale: 'en-GB', timezone: 'Europe/London' },
-      // Chrome — macOS
-      { browser: 'chrome', platform: 'MacIntel', viewport: { width: 1440, height: 900 }, locale: 'en-US', timezone: 'America/Los_Angeles' },
-      { browser: 'chrome', platform: 'MacIntel', viewport: { width: 1680, height: 1050 }, locale: 'en-AU', timezone: 'Australia/Sydney' },
-      // Chrome — Linux
-      { browser: 'chrome', platform: 'Linux x86_64', viewport: { width: 1600, height: 900 }, locale: 'en-US', timezone: 'America/Denver' },
-      { browser: 'chrome', platform: 'Linux x86_64', viewport: { width: 1280, height: 800 }, locale: 'de-DE', timezone: 'Europe/Berlin' },
-      // Microsoft Edge
-      { browser: 'edge', platform: 'Win32', viewport: { width: 1920, height: 1080 }, locale: 'en-US', timezone: 'America/New_York' },
-      { browser: 'edge', platform: 'Win32', viewport: { width: 1366, height: 768 }, locale: 'en-CA', timezone: 'America/Toronto' },
-      // Opera
-      { browser: 'opera', platform: 'Win32', viewport: { width: 1920, height: 1080 }, locale: 'en-US', timezone: 'America/Los_Angeles' },
-      { browser: 'opera', platform: 'MacIntel', viewport: { width: 1440, height: 900 }, locale: 'fr-FR', timezone: 'Europe/Paris' },
-      // Brave (Chrome UA with Brave-specific tweaks handled in agent)
-      { browser: 'brave', platform: 'Win32', viewport: { width: 1920, height: 1080 }, locale: 'en-US', timezone: 'America/Denver' },
-      { browser: 'brave', platform: 'MacIntel', viewport: { width: 1440, height: 900 }, locale: 'es-ES', timezone: 'Europe/Madrid' },
-      // Chrome on mobile-width tablets (still desktop engine)
-      { browser: 'chrome', platform: 'Win32', viewport: { width: 1024, height: 768 }, locale: 'pt-BR', timezone: 'America/Sao_Paulo' },
-      { browser: 'chrome', platform: 'MacIntel', viewport: { width: 1280, height: 720 }, locale: 'it-IT', timezone: 'Europe/Rome' },
-
-      // ── Mobile (real device emulation: touch + mobile viewport + UA) ──
-      // `device` is a puppeteer.KnownDevices name; the agent applies full
-      // mobile emulation and only overrides the UA brand (Chrome/Edge/Opera/
-      // Brave) so the desktop-Chromium engine still looks like a phone.
       // Chrome — Android
       { browser: 'chrome', platform: 'Android', device: 'Pixel 5', locale: 'en-US', timezone: 'America/New_York' },
-      { browser: 'chrome', platform: 'Android', device: 'Galaxy S9+', locale: 'en-US', timezone: 'America/Chicago' },
-      { browser: 'chrome', platform: 'Android', device: 'Galaxy S5', locale: 'en-GB', timezone: 'Europe/London' },
-      { browser: 'chrome', platform: 'Android', device: 'Nexus 5', locale: 'de-DE', timezone: 'Europe/Berlin' },
+      { browser: 'chrome', platform: 'Android', device: 'Pixel 4a (5G)', locale: 'en-US', timezone: 'America/Chicago' },
+      { browser: 'chrome', platform: 'Android', device: 'Pixel 4', locale: 'en-GB', timezone: 'Europe/London' },
+      { browser: 'chrome', platform: 'Android', device: 'Galaxy S9+', locale: 'en-US', timezone: 'America/Los_Angeles' },
+      { browser: 'chrome', platform: 'Android', device: 'Galaxy Note 3', locale: 'de-DE', timezone: 'Europe/Berlin' },
+      { browser: 'chrome', platform: 'Android', device: 'Nexus 5X', locale: 'es-ES', timezone: 'Europe/Madrid' },
+      { browser: 'chrome', platform: 'Android', device: 'Moto G4', locale: 'pt-BR', timezone: 'America/Sao_Paulo' },
       // Edge — Android
-      { browser: 'edge', platform: 'Android', device: 'Galaxy S8', locale: 'en-US', timezone: 'America/Los_Angeles' },
+      { browser: 'edge', platform: 'Android', device: 'Pixel 5', locale: 'en-US', timezone: 'America/Denver' },
+      { browser: 'edge', platform: 'Android', device: 'Galaxy S9+', locale: 'en-CA', timezone: 'America/Toronto' },
       // Opera — Android
-      { browser: 'opera', platform: 'Android', device: 'Galaxy S III', locale: 'es-ES', timezone: 'Europe/Madrid' },
-      // Brave — Android
-      { browser: 'brave', platform: 'Android', device: 'Pixel 5', locale: 'en-AU', timezone: 'Australia/Sydney' },
-      // Safari — iPhone (iOS is Safari-only; the engine is not Chromium,
-      // so we keep the genuine Safari UA rather than faking a brand)
-      { browser: 'safari', platform: 'iPhone', device: 'iPhone 13', locale: 'en-US', timezone: 'America/New_York' },
-      { browser: 'safari', platform: 'iPhone', device: 'iPhone 15 Pro', locale: 'en-GB', timezone: 'Europe/London' },
-      { browser: 'safari', platform: 'iPhone', device: 'iPhone SE (3rd gen)', locale: 'fr-FR', timezone: 'Europe/Paris' },
-      // Safari — iPad
-      { browser: 'safari', platform: 'iPad', device: 'iPad Pro 11', locale: 'en-US', timezone: 'America/Los_Angeles' },
-      { browser: 'safari', platform: 'iPad', device: 'iPad Pro', locale: 'en-AU', timezone: 'Australia/Sydney' },
+      { browser: 'opera', platform: 'Android', device: 'Galaxy Note 3', locale: 'fr-FR', timezone: 'Europe/Paris' },
+      // Brave — Android (stock Chrome UA; detected via navigator.brave)
+      { browser: 'brave', platform: 'Android', device: 'Pixel 4a (5G)', locale: 'en-AU', timezone: 'Australia/Sydney' },
+      // Safari — iPhone (iPhone 12+ / "mobile 12+")
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 12', locale: 'en-US', timezone: 'America/New_York' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 12 Pro', locale: 'en-US', timezone: 'America/Chicago' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 13', locale: 'en-GB', timezone: 'Europe/London' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 13 Pro', locale: 'en-US', timezone: 'America/Los_Angeles' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 14', locale: 'en-AU', timezone: 'Australia/Sydney' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 14 Pro', locale: 'de-DE', timezone: 'Europe/Berlin' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 15', locale: 'en-US', timezone: 'America/Denver' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone 15 Pro', locale: 'fr-FR', timezone: 'Europe/Paris' },
+      { browser: 'safari', platform: 'iPhone', device: 'iPhone SE (3rd gen)', locale: 'es-ES', timezone: 'Europe/Madrid' },
     ],
   },
 
@@ -93,6 +76,9 @@ module.exports = {
   proxy: {
     // Auto grab from free providers
     autoGrab: true,
+    // Continuously grab + check fresh proxies on a timer so the pool never
+    // goes stale (free proxies die quickly). 0 disables the scheduler.
+    refreshInterval: 10 * 60 * 1000,
     // Check proxy before use
     autoCheck: true,
     // Proxy check timeout (ms)

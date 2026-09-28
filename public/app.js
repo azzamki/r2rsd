@@ -118,6 +118,7 @@ function updatePoolStats(pool) {
 function updateProxyStats(proxy) {
   setText('pTotal',   proxy.total || 0);
   setText('pWorking', proxy.working || 0);
+  setText('pUsable',  proxy.usable || 0);
   setText('pFailed',  proxy.failed || 0);
 }
 

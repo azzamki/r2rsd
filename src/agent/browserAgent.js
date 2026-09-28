@@ -37,13 +37,30 @@ function randomBetween(min, max) {
 // screen size.
 const ANDROID_MODELS = {
   'Pixel 5': 'Pixel 5',
-  'Pixel 7': 'Pixel 7',
+  'Pixel 4a (5G)': 'Pixel 4a (5G)',
+  'Pixel 4': 'Pixel 4',
+  'Pixel 3': 'Pixel 3',
+  'Pixel 2': 'Pixel 2',
   'Galaxy S9+': 'SM-G965F',
   'Galaxy S8': 'SM-G950F',
   'Galaxy S5': 'SM-G900F',
   'Galaxy S III': 'GT-I9300',
+  'Galaxy Note 3': 'SM-N9005',
+  'Galaxy Note II': 'GT-N7100',
   'Nexus 5': 'Nexus 5',
   'Nexus 5X': 'Nexus 5X',
+  'Nexus 6P': 'Nexus 6P',
+  'Moto G4': 'Moto G (4)',
+  'LG Optimus L70': 'LGMS323',
+  'Kindle Fire HDX': 'KFAPWI',
+  'JioPhone 2': 'LYF/F30C',
+  'Microsoft Lumia 950': 'Microsoft Lumia 950',
+  'Microsoft Lumia 550': 'Microsoft Lumia 550',
+  'Nokia Lumia 520': 'Nokia Lumia 520',
+  'BlackBerry Z30': 'STL100-2',
+  'Nexus 7': 'Nexus 7',
+  'Nexus 10': 'Nexus 10',
+  'Galaxy Tab S4': 'SM-T830',
 };
 
 const MOBILE_PLATFORMS = new Set(['Android', 'iPhone', 'iPad']);
@@ -64,6 +81,10 @@ function navPlatformFor(profile) {
 // Puppeteer is Chromium-only, so we vary the UA *brand* (Chrome / Edge /
 // Opera / Brave / Safari), OS platform and Chrome major version to diversify
 // fingerprints instead of running one identical client every time.
+//
+// This bot is mobile-only: every profile is Android or iPhone. If a desktop
+// profile ever slips back into config, we still emit a mobile UA rather than
+// a Windows/macOS one so the traffic stays mobile.
 function buildUserAgent(profile) {
   const chromeMajor = randomBetween(120, 131);
   const build = randomBetween(0, 6202);
@@ -72,59 +93,29 @@ function buildUserAgent(profile) {
   const webkit = 'AppleWebKit/537.36 (KHTML, like Gecko)';
   const safari = '537.36';
 
-  // ── Mobile / tablet ──
-  if (isMobileProfile(profile)) {
-    // iOS is Safari-only: use the genuine Safari UA rather than faking a
-    // Chromium brand that the (non-Chromium) engine could never produce.
-    if (profile.platform === 'iPhone' || profile.platform === 'iPad') {
-      const iosMajor = randomBetween(16, 17);
-      const iosMinor = randomBetween(1, 6);
-      const ios = `${iosMajor}_${iosMinor}`;
-      const token = profile.platform === 'iPad' ? 'iPad; CPU OS' : 'iPhone; CPU iPhone OS';
-      return `Mozilla/5.0 (${token} ${ios} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${iosMajor}.${iosMinor} Mobile/15E148 Safari/604.1`;
-    }
-
-    // Android — Chromium brands (Chrome / Edge / Opera / Brave)
-    const model = ANDROID_MODELS[profile.device] || 'SM-G975F';
-    const androidVer = randomBetween(11, 14);
-    let ua = `Mozilla/5.0 (Linux; Android ${androidVer}; ${model}) ${webkit} ${cef} Mobile Safari/${safari}`;
-    if (profile.browser === 'edge') {
-      ua += ` Edg/${chromeMajor + 20}.0.${build}.${patch}`;
-    } else if (profile.browser === 'opera') {
-      ua += ` OPR/${chromeMajor - 13}.0.${build}.${patch}`;
-    }
-    // brave + chrome → stock Chrome UA (Brave is detected via navigator.brave)
-    return ua;
+  // ── iPhone / iPad — Safari-only ──
+  // iOS is not a Chromium engine, so use the genuine Safari UA rather than
+  // faking a brand the engine could never produce. iPhone 12+ targets.
+  if (profile.platform === 'iPhone' || profile.platform === 'iPad') {
+    const iosMajor = randomBetween(16, 18);
+    const iosMinor = randomBetween(1, 6);
+    const ios = `${iosMajor}_${iosMinor}`;
+    const token = profile.platform === 'iPad' ? 'iPad; CPU OS' : 'iPhone; CPU iPhone OS';
+    return `Mozilla/5.0 (${token} ${ios} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${iosMajor}.${iosMinor} Mobile/15E148 Safari/604.1`;
   }
 
-  // ── Desktop ──
-  let platformToken;
-  switch (profile.platform) {
-    case 'MacIntel':
-      platformToken = 'Macintosh; Intel Mac OS X 10_15_7';
-      break;
-    case 'Linux x86_64':
-      platformToken = 'X11; Linux x86_64';
-      break;
-    default:
-      platformToken = 'Windows NT 10.0; Win64; x64';
+  // ── Android — Chromium brands (Chrome / Edge / Opera / Brave) ──
+  // Chrome 120+ ("mobile 12+").
+  const model = ANDROID_MODELS[profile.device] || 'SM-G975F';
+  const androidVer = randomBetween(11, 14);
+  let ua = `Mozilla/5.0 (Linux; Android ${androidVer}; ${model}) ${webkit} ${cef} Mobile Safari/${safari}`;
+  if (profile.browser === 'edge') {
+    ua += ` Edg/${chromeMajor + 20}.0.${build}.${patch}`;
+  } else if (profile.browser === 'opera') {
+    ua += ` OPR/${chromeMajor - 13}.0.${build}.${patch}`;
   }
-
-  switch (profile.browser) {
-    case 'edge': {
-      const edgeMajor = chromeMajor + 20;
-      return `Mozilla/5.0 (${platformToken}) ${webkit} ${cef} Safari/${safari} Edg/${edgeMajor}.0.${build}.${patch}`;
-    }
-    case 'opera': {
-      const opMajor = chromeMajor - 13;
-      return `Mozilla/5.0 (${platformToken}) ${webkit} ${cef} Safari/${safari} OPR/${opMajor}.0.${build}.${patch}`;
-    }
-    case 'brave':
-      // Brave uses a stock Chrome UA; detection happens via navigator.brave
-      return `Mozilla/5.0 (${platformToken}) ${webkit} ${cef} Safari/${safari}`;
-    default:
-      return `Mozilla/5.0 (${platformToken}) ${webkit} ${cef} Safari/${safari}`;
-  }
+  // brave + chrome → stock Chrome UA (Brave is detected via navigator.brave)
+  return ua;
 }
 
 function weightedRandom(items) {
@@ -435,13 +426,21 @@ class BrowserAgent {
   // LAUNCH BROWSER
   // ──────────────────────────────
   async launch() {
-    // Pick a random browser fingerprint (Chrome/Edge/Opera/Brave across
-    // Windows/macOS/Linux with different locales & timezones).
+    // Pick a random browser fingerprint (Chrome/Edge/Opera/Brave on Android,
+    // Safari on iPhone — this bot is mobile-only).
     const profile = config.bot.browserProfiles[
       Math.floor(Math.random() * config.bot.browserProfiles.length)
     ];
     this.profile = profile;
     this.userAgent = buildUserAgent(profile);
+
+    // Safety net: if a desktop profile ever lands back in config, force a
+    // mobile UA + mobile emulation so the traffic can never go desktop.
+    if (!isMobileProfile(profile)) {
+      logger.warn(`[Agent ${this.agentId}] Desktop profile "${profile.platform}" in mobile-only config — forcing mobile fingerprint`);
+      this.profile = { ...profile, platform: 'Android', device: 'Pixel 5' };
+      this.userAgent = buildUserAgent(this.profile);
+    }
 
     // Get proxy (unless the job disabled proxies)
     this.proxyInfo = this.options.useProxy === false
@@ -864,3 +863,8 @@ class BrowserAgent {
 }
 
 module.exports = BrowserAgent;
+// Exported for verification scripts (see src/scripts/checkUa.js) — not used
+// by the visit path itself.
+module.exports.buildUserAgent = buildUserAgent;
+module.exports.isMobileProfile = isMobileProfile;
+module.exports.ANDROID_MODELS = ANDROID_MODELS;
