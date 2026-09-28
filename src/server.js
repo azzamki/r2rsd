@@ -19,7 +19,8 @@ const io = socketIo(server, {
 });
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static(path.join(__dirname, '../public')));
 
 // ══════════════════════════════════════════════════════════
@@ -138,60 +139,68 @@ app.post('/api/visit/stop', async (req, res) => {
 // ── Proxy: Grab ──
 app.post('/api/proxy/grab', async (req, res) => {
   const { manualProxies = [] } = req.body;
-  io.emit('proxyStatus', { phase: 'grabbing' });
-
-  proxyManager.once('grabbed', (count) => io.emit('proxyStatus', { phase: 'grabbed', count }));
-  proxyManager.once('checked', (count) => io.emit('proxyStatus', { phase: 'checked', count }));
-
-  const onProgress = (p) => io.emit('proxyStatus', { phase: 'checking', ...p });
-  proxyManager.on('checkProgress', onProgress);
-  proxyManager.once('checked', () => proxyManager.off('checkProgress', onProgress));
-
-  try {
-    const working = await proxyManager.initialize(manualProxies);
-    res.json({
-      total: proxyManager.proxies.length,
-      working: working.length,
-      list: working.slice(0, 100),
-    });
-  } catch (e) {
-    logger.error('Proxy grab failed:', e.message);
-    res.status(500).json({ error: e.message });
-  } finally {
-    proxyManager.off('checkProgress', onProgress);
+  if (proxyManager.isGrabbing || proxyManager.isChecking) {
+    return res.status(409).json({ error: 'Proxy task is already in progress.' });
   }
+
+  io.emit('proxyStatus', { phase: 'grabbing' });
+  res.json({ status: 'started' });
+
+  (async () => {
+    proxyManager.once('grabbed', (count) => io.emit('proxyStatus', { phase: 'grabbed', count }));
+    proxyManager.once('checked', (count) => io.emit('proxyStatus', { phase: 'checked', count }));
+
+    const onProgress = (p) => io.emit('proxyStatus', { phase: 'checking', ...p });
+    proxyManager.on('checkProgress', onProgress);
+    proxyManager.once('checked', () => proxyManager.off('checkProgress', onProgress));
+
+    try {
+      await proxyManager.initialize(manualProxies);
+    } catch (e) {
+      logger.error('Proxy grab failed:', e.message);
+    } finally {
+      proxyManager.off('checkProgress', onProgress);
+    }
+  })();
 });
 
 // ── Proxy: Check only ──
 app.post('/api/proxy/check', async (req, res) => {
   const { proxies = [] } = req.body;
-  io.emit('proxyStatus', { phase: 'checking' });
-
-  const onProgress = (p) => io.emit('proxyStatus', { phase: 'checking', ...p });
-  proxyManager.on('checkProgress', onProgress);
-  proxyManager.once('checked', () => proxyManager.off('checkProgress', onProgress));
-
-  try {
-    let working;
-    if (proxies.length > 0) {
-      // Validate ONLY the caller-supplied list (fast), then merge the
-      // survivors into the pool. Avoids re-checking thousands of proxies.
-      const cleaned = proxies
-        .map(p => proxyManager.parseProxyLine(p))
-        .filter(Boolean);
-      cleaned.forEach(p => proxyManager.removeFromBlacklist(p));
-      proxyManager.addProxies(cleaned, true);
-      working = await proxyManager.checkAllProxies(cleaned, true);
-    } else {
-      working = await proxyManager.checkAllProxies();
-    }
-    res.json({ working: working.length, list: working });
-  } catch (e) {
-    logger.error('Proxy check failed:', e.message);
-    res.status(500).json({ error: e.message });
-  } finally {
-    proxyManager.off('checkProgress', onProgress);
+  if (proxyManager.isChecking) {
+    return res.status(409).json({ error: 'Proxy check is already in progress.' });
   }
+
+  const cleaned = proxies
+    .map(p => proxyManager.parseProxyLine(p))
+    .filter(Boolean);
+
+  if (cleaned.length > 0) {
+    cleaned.forEach(p => proxyManager.removeFromBlacklist(p));
+    proxyManager.addProxies(cleaned, true);
+  }
+
+  const checkCount = cleaned.length || proxyManager.proxies.length;
+  io.emit('proxyStatus', { phase: 'checking', done: 0, total: checkCount });
+  res.json({ status: 'started', count: checkCount });
+
+  (async () => {
+    const onProgress = (p) => io.emit('proxyStatus', { phase: 'checking', ...p });
+    proxyManager.on('checkProgress', onProgress);
+    proxyManager.once('checked', () => proxyManager.off('checkProgress', onProgress));
+
+    try {
+      if (cleaned.length > 0) {
+        await proxyManager.checkAllProxies(cleaned, true);
+      } else {
+        await proxyManager.checkAllProxies();
+      }
+    } catch (e) {
+      logger.error('Proxy check failed:', e.message);
+    } finally {
+      proxyManager.off('checkProgress', onProgress);
+    }
+  })();
 });
 
 // ── Proxy: List ──

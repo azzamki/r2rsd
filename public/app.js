@@ -280,13 +280,17 @@ async function grabProxies() {
       body: JSON.stringify({ manualProxies }),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch {
+      throw new Error(`Server returned HTML error (${res.status})`);
+    }
+
     if (res.ok) {
-      showToast(`✅ ${data.working} working proxies ready`, 'success');
-      addLog(`🌐 Grab done: ${data.total} total, ${data.working} working`, 'proxy');
+      showToast('🔍 Proxy grab & check started...', 'info');
     } else {
       showToast(`❌ ${data.error || 'Grab failed'}`, 'error');
-      addLog(`❌ Proxy grab failed: ${data.error}`, 'error');
+      addLog(`❌ Proxy grab failed: ${data.error || text}`, 'error');
     }
   } catch (e) {
     showToast(`❌ Request failed: ${e.message}`, 'error');
@@ -295,7 +299,6 @@ async function grabProxies() {
     btn.disabled = false;
     btn.innerHTML = '<span>🔍</span> Grab + Check';
   }
-  loadProxyList();
 }
 
 async function checkManualProxies() {
@@ -310,16 +313,21 @@ async function checkManualProxies() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ proxies }),
     });
-    const data = await res.json();
+
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch {
+      throw new Error(`Server returned HTML error (${res.status})`);
+    }
+
     if (res.ok) {
-      showToast(`✅ ${data.working} working proxies`, 'success');
+      showToast(`🔄 Checking ${data.count || proxies.length} proxies...`, 'info');
     } else {
       showToast(`❌ ${data.error || 'Check failed'}`, 'error');
     }
   } catch (e) {
     showToast(`❌ Request failed: ${e.message}`, 'error');
   }
-  loadProxyList();
 }
 
 async function loadProxyList() {
