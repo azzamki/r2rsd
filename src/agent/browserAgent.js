@@ -14,6 +14,7 @@ const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 const config = require('../config');
 const proxyManager = require('../proxy/proxyManager');
+const { buildAntiFingerprintScript } = require('./antiFingerprint');
 
 const stealth = StealthPlugin();
 stealth.enabledEvasions.delete('user-agent-override');
@@ -413,6 +414,10 @@ class BrowserAgent {
     this.proxyInfo = null;
     this.userAgent = null;
     this.visitCount = 0;
+    // Unique per-visit fingerprint seed. Used to randomize canvas hashes and
+    // media-device IDs so two visits can never be linked by hardware
+    // fingerprint even if they share a proxy IP.
+    this.fingerprintKey = Math.floor(Math.random() * 1e12).toString(36);
     this.status = 'idle'; // idle | browsing | visiting | done | error
     this.currentUrl = null;
     this.stats = {
@@ -463,6 +468,16 @@ class BrowserAgent {
       '--no-zygote',
       '--disable-gpu',
       `--lang=en-US,en;q=0.9`,
+
+      // ── WEBRTC LEAK PREVENTION (critical) ──
+      // --proxy-server does NOT route WebRTC. Without these flags the page
+      // can open an RTCPeerConnection, run STUN against Google's servers and
+      // read the machine's REAL public + local IP — no matter which proxy is
+      // configured. That is the #1 reason "IP terdeteksi sama" on every
+      // visit. Enforce a fake single route so there is nothing to leak.
+      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+      '--disable-features=WebRtcHideLocalIpsWithMdns',
+      '--enforce-webrtc-ip-permission-check',
     ];
 
     // Mobile devices get their size from the device descriptor (set via
@@ -506,7 +521,21 @@ class BrowserAgent {
       ignoreHTTPSErrors: true,
     });
 
-    this.page = await this.browser.newPage();
+    // ── COOKIE ISOLATION (incognito context) ──
+    // Every visit runs inside its own browser context: zero cookies, zero
+    // localStorage, zero cache shared with any previous visit. Without this,
+    // a site's cookie (or a localStorage fingerprint) survives between visits
+    // and ties them all together as one "visitor" — which is exactly the
+    // "cookies ke detek sama" problem.
+    this.context = await this.browser.createBrowserContext();
+    this.page = await this.context.newPage();
+
+    // puppeteer-extra's stealth/evaluateOnNewDocument hooks do NOT propagate
+    // into incognito contexts (verified: overrides apply on the default page
+    // but are silently skipped inside a context). Re-inject the anti-leak
+    // script through CDP on THIS context's target so it actually runs.
+    await this._injectAntiFingerprint();
+
     if (this._proxyAuth) {
       await this.page.authenticate(this._proxyAuth).catch(e => {
         logger.warn(`[Agent ${this.agentId}] Proxy auth error: ${e.message}`);
@@ -533,7 +562,11 @@ class BrowserAgent {
     // Set user agent
     await this.page.setUserAgent(this.userAgent);
 
-    // Override navigator properties to avoid detection
+    // Override navigator properties to avoid detection.
+    // NOTE: WebRTC blocking, canvas noise and mediaDevices spoofing live in
+    // antiFingerprint.js (injected via CDP), NOT here —
+    // page.evaluateOnNewDocument() is silently ignored inside an incognito
+    // browser context, so anything placed here would be dead code.
     await this.page.evaluateOnNewDocument((platform, brand, isMobile) => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
       Object.defineProperty(navigator, 'platform', { get: () => platform });
@@ -571,6 +604,26 @@ class BrowserAgent {
 
     logger.info(`[Agent ${this.agentId}] Browser launched | ${profile.browser}/${profile.platform}${profile.device ? ` ${profile.device}` : ''} ${isMobileProfile(profile) ? '(mobile)' : `${windowSize.width}x${windowSize.height}`} | UA: ${this.userAgent.substring(0, 50)}...`);
     this.status = 'idle';
+  }
+
+  // ──────────────────────────────
+  // ANTI-FINGERPRINT INJECTION (CDP)
+  // ──────────────────────────────
+  // page.evaluateOnNewDocument() is silently ignored inside an incognito
+  // browser context (puppeteer-extra bug), so the WebRTC block and canvas
+  // noise would never run. Registering the same script through CDP on this
+  // context's own target works reliably.
+  async _injectAntiFingerprint() {
+    if (!this.page) return;
+    try {
+      const client = await this.page.target().createCDPSession();
+      await client.send('Page.enable');
+      await client.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: buildAntiFingerprintScript(this.fingerprintKey),
+      });
+    } catch (e) {
+      logger.warn(`[Agent ${this.agentId}] Anti-fingerprint inject failed: ${e.message}`);
+    }
   }
 
   // ──────────────────────────────
@@ -838,6 +891,13 @@ class BrowserAgent {
 
   async close() {
     try {
+      // Close the isolated context first — it owns the page. Leftover
+      // contexts leak a whole browser process per visit.
+      if (this.context) {
+        await this.context.close().catch(() => {});
+        this.context = null;
+        this.page = null;
+      }
       if (this.browser) {
         await this.browser.close();
         this.browser = null;

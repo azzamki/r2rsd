@@ -62,6 +62,7 @@ class ProxyManager extends EventEmitter {
     this.failCount = {};        // proxy -> consecutive failure strikes
     this.lastFailAt = {};       // proxy -> timestamp of last failure
     this.usedCount = {};       // Usage counter per proxy
+    this.lastUsedAt = {};      // proxy -> last handed to an agent (LRU rotation)
     this.currentIndex = 0;
     this.isGrabbing = false;
     this.isChecking = false;
@@ -146,10 +147,17 @@ class ProxyManager extends EventEmitter {
     // Blacklisted proxies stay out forever.
     const allProxies = new Set(this.proxies.filter(p => !this.blacklist.has(p)));
     const sources = config.proxy.sources;
+    const jsonSources = config.proxy.jsonSources || [];
+
+    // Cache-buster: rotating endpoints return a *different* list per call,
+    // but some CDNs cache the response. A random query param defeats that.
+    const cacheBuster = `_v${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
     const fetches = sources.map(async (url) => {
       try {
-        const res = await axios.get(url, {
+        const sep = url.includes('?') ? '&' : '?';
+        const fetchUrl = `${url}${sep}_=${cacheBuster}`;
+        const res = await axios.get(fetchUrl, {
           timeout: 15000,
           proxy: false,
           signal: AbortSignal.timeout(15000),
@@ -174,7 +182,49 @@ class ProxyManager extends EventEmitter {
       }
     });
 
-    await Promise.all(fetches);
+    // JSON APIs expose anonymity + protocols, so we can pre-filter elite /
+    // anonymous proxies and drop transparent ones before even checking them.
+    const jsonFetches = jsonSources.map(async (url) => {
+      try {
+        const sep = url.includes('?') ? '&' : '?';
+        const fetchUrl = `${url}${sep}_=${cacheBuster}`;
+        const res = await axios.get(fetchUrl, {
+          timeout: 15000,
+          proxy: false,
+          signal: AbortSignal.timeout(15000),
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ProxyGrabber/1.0)' },
+        });
+        const data = res.data || {};
+        const list = Array.isArray(data) ? data : (data.data || data.proxies || data.list || []);
+        let added = 0;
+        list.forEach(item => {
+          // geonode shape: { ip, port, anonymityLevel, protocols }
+          const ip = item.ip || item.host || item.proxy;
+          const port = item.port;
+          if (!ip || !port) return;
+          const anon = String(item.anonymityLevel || item.anonymity || '').toLowerCase();
+          const protos = (item.protocols || item.protocol || []).map(p => String(p).toLowerCase());
+          if (config.proxy.rejectTransparent && (anon === 'transparent' || anon.includes('transparent'))) return;
+          // Only keep proxies that speak http(s) — socks entries from these
+          // feeds are usually dead and we can't use them for CONNECT anyway.
+          if (protos.length && !protos.some(p => p.includes('http'))) return;
+          const clean = parseProxyLine(`${ip}:${port}`);
+          if (!clean) return;
+          if (this.blacklist.has(clean)) return;
+          if (!allProxies.has(clean)) {
+            allProxies.add(clean);
+            added++;
+          }
+        });
+        logger.info(`  ✅ [json] ${url.substring(0, 50)}... → ${list.length} entries (+${added} new)`);
+        return added;
+      } catch (e) {
+        logger.warn(`  ❌ [json] Failed: ${url.substring(0, 50)}... (${e.message})`);
+        return 0;
+      }
+    });
+
+    await Promise.all([...fetches, ...jsonFetches]);
 
     this.proxies = [...allProxies];
     this.stats.total = this.proxies.length;
@@ -233,10 +283,16 @@ class ProxyManager extends EventEmitter {
       return { proxy: clean, working: false, latency: null, reason: `agent error: ${e.message}` };
     }
 
+    // Every check URL must be https://. A plain http:// check passes on
+    // proxies that can only do plain GET (no CONNECT tunnel) — those are
+    // useless for https targets and are a classic source of "the visit
+    // loaded but the IP was my own".
     const checkUrls = [
       config.proxy.checkUrl,
-      config.proxy.checkUrlFallback || 'http://httpbin.org/ip',
-    ].filter(Boolean);
+      config.proxy.checkUrlFallback || 'https://httpbin.org/ip',
+    ]
+      .filter(Boolean)
+      .filter(u => /^https:\/\//i.test(u));
 
     let lastReason = 'failed';
     for (const testUrl of checkUrls) {
@@ -268,7 +324,6 @@ class ProxyManager extends EventEmitter {
 
     return { proxy: clean, working: false, latency: null, reason: lastReason };
   }
-
   async checkAllProxies(proxiesToCheck = null, allowBlacklisted = false) {
     // Serialize check runs. If a check is already in flight, wait for it and
     // then run the caller's list instead of silently returning an empty list.
@@ -350,7 +405,28 @@ class ProxyManager extends EventEmitter {
   getRandomProxy() {
     const pool = this._usablePool();
     if (pool.length === 0) return null;
-    return pool[Math.floor(Math.random() * pool.length)];
+
+    // ── Least-recently-used rotation ──
+    // Pure random selection lets the same IP be handed to several agents at
+    // once (or the same IP twice in a row), which is exactly how a target
+    // site concludes "this is one visitor hitting me repeatedly".
+    // Prefer the proxy that has been idle the longest; ties broken randomly.
+    const now = Date.now();
+    let best = null;
+    let bestIdle = -1;
+    for (const p of pool) {
+      const idle = now - (this.lastUsedAt[p.proxy] || 0);
+      if (idle > bestIdle) {
+        bestIdle = idle;
+        best = p;
+        // Small random chance to take an earlier candidate instead, so the
+        // rotation isn't perfectly deterministic (which is also a pattern).
+        if (bestIdle > 60000 && Math.random() < 0.3) break;
+      }
+    }
+    if (!best) best = pool[Math.floor(Math.random() * pool.length)];
+    this.lastUsedAt[best.proxy] = now;
+    return best;
   }
 
   _usablePool() {

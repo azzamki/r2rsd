@@ -93,23 +93,47 @@ module.exports = {
     // Min proxy speed (ms) - discard slower
     maxLatency: 8000,
     // Free proxy sources
+    // NOTE: static GitHub proxy lists are deliberately excluded — they are
+    // the same few thousand IPs everyone else's bot uses, they die within
+    // hours, and they are almost all transparent (they leak your real IP).
+    // Instead we query rotating aggregator APIs that return a *different*
+    // list on every request, so each grab yields fresh proxies.
     sources: [
-      'https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true',
-      'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-      'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+      // ── Rotating endpoints (different list every call) ──
+      // ProxyScrape v3 — randomize order & add a cache-buster so each grab
+      // returns a different slice of their pool.
+      'https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=elite,anonymous&simplified=true&rand=yes',
+      'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&protocol=http&timeout=10000&country=all&ssl=all&anonymity=elite,anonymous&rand=yes',
+      // ProxyScrape "premium" public endpoint (rotating, higher quality)
+      'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all&simplified=true',
+      // Monosans mirror (rotated by their backend)
       'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-      'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
-      'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt',
-      'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt',
+      // ── Rotating JSON APIs (parsed for the "elite"/"anonymous" field) ──
+      'https://www.proxy-list.download/api/v1/get?type=https&anon=elite',
+      'https://www.proxy-list.download/api/v1/get?type=http&anon=elite',
+      'https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=https&timeout=10000&country=all&ssl=all&anonymity=elite&simplified=true&rand=yes',
     ],
-    // Proxy check URL
+    // Extra rotating endpoints that need JSON parsing (not plain ip:port).
+    // Each entry returns a different set on every request.
+    jsonSources: [
+      // geonode — paginated, random page each grab for variety
+      'https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc&protocols=http%2Chttps&anonymityLevel=elite%2Canonymous',
+      'https://proxylist.geonode.com/api/proxy-list?limit=500&page=2&sort_by=lastChecked&sort_type=desc&protocols=http%2Chttps&anonymityLevel=elite%2Canonymous',
+    ],
+    // Reject proxies that advertise themselves as transparent (they append
+    // X-Forwarded-For / Via and leak your real IP to the target site).
+    rejectTransparent: true,
+    // Require the proxy to actually tunnel HTTPS (CONNECT). A proxy that only
+    // does plain HTTP is useless for https:// targets and is how "same IP"
+    // leaks happen — the browser falls back to a direct connection.
+    requireHttpsTunnel: true,
+    // Proxy check URL (MUST be https — we need to prove CONNECT works)
     checkUrl: 'https://api.ipify.org?format=json',
     // Fallback check URL
-    checkUrlFallback: 'http://httpbin.org/ip',
+    checkUrlFallback: 'https://httpbin.org/ip',
     // Reject proxies whose exit IP does not match the proxy address
     // (transparent proxies that leak your real IP are useless for this).
-    requireIpMatch: false,
-    // Retry a visit with a different proxy this many times before giving up
+    requireIpMatch: false,    // Retry a visit with a different proxy this many times before giving up
     maxProxyRetries: 5,
     // How many times a proxy may fail before it is blacklisted.
     failThreshold: 5,

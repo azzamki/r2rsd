@@ -10,6 +10,10 @@ data/_diag.json
 data/_devices.json
 data/_profiles.json
 
+# Runtime diagnostics / debug output (fingerprint probes, boot logs)
+data/_*.json
+data/_*.log
+
 # Environment
 .env
 .env.local
